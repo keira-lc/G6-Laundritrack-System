@@ -1,58 +1,108 @@
-# Updated LaundriTrack Prototype
+# LaundriTrack Admin Panel 
 
-A PHP + MySQL/MariaDB admin prototype based on the direction in the UI/UX figma LaundriTrack design board.
-
-## What is implemented
-
-- Admin login + simulated MFA second step
-- Dashboard with orders, paid revenue and low-stock alerts
-- Catalog/service CRUD:
-  - SKU
-  - price
-  - stock
-  - safety stock
-  - category
-  - variants
-  - descriptive alt text
-- Order lifecycle management:
-  - Pending
-  - Processing
-  - Ready for Pickup
-  - Shipped
-  - Delivered
-  - Refunded
-- Tracking number / shipping-label simulation
-- Return/refund simulation
-- Inclusive customer profile form:
-  - one Full Name field
-  - flexible title choices including Mx.
-  - inclusive gender choices
-  - Other / self-describe
-- Semantic HTML tables, labels, buttons, landmarks and visible keyboard focus
-- Text-based status labels so status is not communicated by color alone
-- Prepared SQL statements, password_hash/password_verify, CSRF token, session regeneration
+A functional admin-laundry management prototype using the yellow/cream/navy LaundriTrack design. 
 
 ## Stack
+- Frontend: React + Vite
+- Backend: Node.js + Express
+- Database: MySQL through XAMPP / phpMyAdmin
+- Database driver: mysql2
+- Authentication: JWT + bcrypt + simulated MFA
+- Styling: custom CSS
 
-Custom web application: PHP 8+, MySQL/MariaDB, HTML5, CSS3 and vanilla JavaScript.
+## Database structure
+The SQL file is here:
 
-## XAMPP setup
+`backend/database/laundritrack.sql`
 
-1. Copy the `LaundriTrack_Admin` folder into:
-   `C:\xampp\htdocs\`
-2. Start Apache and MySQL in XAMPP.
-3. Open phpMyAdmin.
-4. Import `database.sql`.
-5. Visit:
-   `http://localhost/LaundriTrack_Admin/`
-6. Demo admin:
-   - Email: `admin@laundritrack.local`
-   - Password: `Admin@12345`
-7. After login, the prototype generates a six-digit MFA code on screen. This is intentionally simulated for classroom demonstration; production should use a real authenticator, email/SMS provider, or identity platform.
+Tables:
+- `admin_users` — administrator accounts, roles, MFA flag, bcrypt password hash
+- `customers` — inclusive customer profile fields
+- `products` — SKU, category, price, stock, safety stock, alt text
+- `product_variants` — product sizes/colors/variants
+- `orders` — order lifecycle, payment, tracking, returns/refunds
+- `order_items` — products and quantities belonging to orders
 
-## Security note
+## STEP 1 — Start XAMPP
+1. Open **XAMPP Control Panel**.
+2. Start **Apache**.
+3. Start **MySQL**.
+4. Make sure MySQL shows **Running**.
 
-This is a prototype. For production, also use HTTPS, secure/HttpOnly/SameSite cookies, a real MFA provider, server-side rate limiting and lockout, secret management outside source control, audit logs, least-privilege database accounts, backups, and encryption at rest where required.
+## STEP 2 — Create the database in phpMyAdmin
+1. Open `http://localhost/phpmyadmin`.
+2. Click **Import**.
+3. Select:
+   `backend/database/laundritrack.sql`
+4. Click **Import** / **Go**.
+5. You should see a database named `laundritrack`.
 
-figma ui/ux design
-https://www.figma.com/design/C8zutWCvlHY76zX1TMNxh3/LaundriTrack?node-id=0-1&t=mauTTZJrkpHnb7uq-0 
+The SQL creates the tables and sample products/orders/customers.
+
+## STEP 3 — Configure the backend
+Use:
+
+```env
+PORT=5000
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=laundritrack
+DB_USER=root
+DB_PASSWORD=
+JWT_SECRET=replace_with_a_long_random_secret
+```
+
+For the normal XAMPP setup, `root` has a blank password. If you configured a MySQL root password, put it after `DB_PASSWORD=`.
+
+## STEP 4 — Install and run backend
+Open a terminal inside `backend`:
+
+npm install
+npm run dev
+```
+`LaundriTrack API running on http://localhost:5000`
+
+Test:
+`http://localhost:5000/api/health`
+
+It should report MySQL/XAMPP as the database.
+
+## STEP 5 — Run frontend
+Open another terminal:
+
+cd frontend
+npm install
+npm run dev
+```
+Open the Vite URL, normally:
+
+`http://localhost:5173`
+
+## Admin login
+- Email: `admin@laundritrack.local`
+- Password: `Admin@12345`
+- MFA code: `123456`
+
+The backend automatically creates this admin account with a bcrypt hash if it does not already exist.
+
+## Admin functions
+- Dashboard metrics
+- Product add/edit/delete
+- SKU uniqueness validation
+- Stock and safety-stock warnings
+- Product variants
+- Product image alt text
+- Order status lifecycle
+- Shipping/tracking simulation
+- Refund/return simulation
+- Inclusive customer profile fields
+- JWT authentication
+- bcrypt password hashing
+- MFA simulation
+- Admin role protection
+
+## Accessibility
+The UI uses semantic controls, visible focus states, explicit status text, descriptive alt-text fields, visible labels, and specific validation messages. Status meaning is not dependent on red/green color alone.
+
+FIGMA DESIGN
+ https://www.figma.com/design/C8zutWCvlHY76zX1TMNxh3/LaundriTrack?node-id=0-1&t=mauTTZJrkpHnb7uq-0 

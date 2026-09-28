@@ -1,0 +1,14 @@
+{
+  "name": "laundritrack-admin-api",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {"dev":"node --watch server.js", "start":"node server.js"},
+  "dependencies": {
+    "bcryptjs":"^2.4.3",
+    "cors":"^2.8.5",
+    "dotenv":"^16.4.7",
+    "express":"^4.21.2",
+    "jsonwebtoken":"^9.0.2",
+    "mysql2":"^3.14.1"
+  }
+}
