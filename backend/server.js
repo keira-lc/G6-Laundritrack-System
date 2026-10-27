@@ -40,9 +40,13 @@ function adminOnly(req,res,next){
   if(req.user?.role!=='admin') return res.status(403).json({message:'Admin role required.'});
   next();
 }
+function customerOnly(req,res,next){
+  if(req.user?.role!=='customer') return res.status(403).json({message:'Customer account required.'});
+  next();
+}
 
 app.get('/api/health', async (req,res)=>{
-  try { await pool.query('SELECT 1'); res.json({ok:true,service:'LaundriTrack Admin API',database:'MySQL/XAMPP'}); }
+  try { await pool.query('SELECT 1'); res.json({ok:true,service:'GARDEN Laundry Hub API',database:'MySQL/XAMPP'}); }
   catch(e){ res.status(503).json({ok:false,message:'Database connection failed.',error:e.message}); }
 });
 
@@ -68,6 +72,142 @@ app.post('/api/auth/mfa', async (req,res)=>{
     const token=jwt.sign({sub:user.id,email:user.email,role:user.role},JWT_SECRET,{expiresIn:'4h'});
     res.json({token,user:{id:user.id,name:user.full_name,email:user.email,role:user.role,mfaEnabled:!!user.mfa_enabled}});
   } catch { res.status(401).json({message:'Invalid MFA code or expired challenge.'}); }
+});
+
+// Customer account API for the storefront. Passwords are stored as bcrypt hashes.
+app.post('/api/store/auth/signup', async (req,res)=>{
+  const fullName=String(req.body.fullName||'').trim();
+  const email=String(req.body.email||'').trim().toLowerCase();
+  const password=String(req.body.password||'');
+  if(!fullName || !email || !password) return res.status(400).json({message:'Name, email, and password are required.'});
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({message:'Enter a valid email address.'});
+  if(password.length<8) return res.status(400).json({message:'Password must be at least 8 characters.'});
+  try {
+    const [existing]=await pool.query('SELECT id,password_hash,full_name,phone,address FROM customers WHERE LOWER(email)=? LIMIT 1',[email]);
+    const passwordHash=await bcrypt.hash(password,12);
+    let customerId, phone='', address='';
+    if(existing.length) {
+      if(existing[0].password_hash) return res.status(409).json({message:'An account with this email already exists. Please sign in.'});
+      customerId=existing[0].id; phone=existing[0].phone||''; address=existing[0].address||'';
+      await pool.query('UPDATE customers SET full_name=?,password_hash=? WHERE id=?',[fullName,passwordHash,customerId]);
+    } else {
+      const [created]=await pool.query('INSERT INTO customers(full_name,email,password_hash) VALUES (?,?,?)',[fullName,email,passwordHash]);
+      customerId=created.insertId;
+    }
+    const token=jwt.sign({sub:customerId,email,role:'customer'},JWT_SECRET,{expiresIn:'7d'});
+    res.status(201).json({token,user:{id:customerId,fullName,email,phone,address}});
+  } catch(e){ res.status(500).json({message:'Could not create your account. Check the database migration and try again.'}); }
+});
+
+app.post('/api/store/auth/login', async (req,res)=>{
+  const email=String(req.body.email||'').trim().toLowerCase();
+  const password=String(req.body.password||'');
+  try {
+    const [rows]=await pool.query('SELECT id,full_name,email,phone,address,password_hash FROM customers WHERE LOWER(email)=? LIMIT 1',[email]);
+    const user=rows[0];
+    if(!user || !user.password_hash || !(await bcrypt.compare(password,user.password_hash))) return res.status(401).json({message:'Invalid email or password.'});
+    const token=jwt.sign({sub:user.id,email:user.email,role:'customer'},JWT_SECRET,{expiresIn:'7d'});
+    res.json({token,user:{id:user.id,fullName:user.full_name,email:user.email,phone:user.phone||'',address:user.address||''}});
+  } catch(e){ res.status(500).json({message:'Sign-in failed. Please try again.'}); }
+});
+
+app.get('/api/store/auth/me',auth,customerOnly,async(req,res)=>{
+  try {
+    const [rows]=await pool.query('SELECT id,full_name fullName,email,phone,address,created_at createdAt FROM customers WHERE id=? LIMIT 1',[req.user.sub]);
+    if(!rows.length) return res.status(404).json({message:'Customer account not found.'});
+    res.json(rows[0]);
+  } catch(e){res.status(500).json({message:'Could not load your profile.'});}
+});
+
+app.put('/api/store/auth/profile',auth,customerOnly,async(req,res)=>{
+  const fullName=String(req.body.fullName||'').trim();
+  const phone=String(req.body.phone||'').trim();
+  const address=String(req.body.address||'').trim();
+  if(!fullName) return res.status(400).json({message:'Full name is required.'});
+  try {
+    await pool.query('UPDATE customers SET full_name=?,phone=?,address=? WHERE id=?',[fullName,phone||null,address||null,req.user.sub]);
+    const [rows]=await pool.query('SELECT id,full_name fullName,email,phone,address,created_at createdAt FROM customers WHERE id=?',[req.user.sub]);
+    res.json(rows[0]);
+  } catch(e){res.status(500).json({message:'Could not save your profile.'});}
+});
+
+app.get('/api/store/orders/mine',auth,customerOnly,async(req,res)=>{
+  try {
+    const [orders]=await pool.query('SELECT id,order_number orderNumber,items_count items,total,status,payment_status paymentStatus,tracking_number trackingNumber,address,created_at createdAt FROM orders WHERE customer_id=? ORDER BY id DESC',[req.user.sub]);
+    for(const order of orders){
+      const [items]=await pool.query('SELECT product_name name,variant_name variant,quantity,unit_price unitPrice,subtotal FROM order_items WHERE order_id=? ORDER BY id',[order.id]);
+      order.total=Number(order.total); order.items=Number(order.items); order.lines=items.map(i=>({...i,quantity:Number(i.quantity),unitPrice:Number(i.unitPrice),subtotal:Number(i.subtotal)}));
+    }
+    res.json(orders);
+  } catch(e){res.status(500).json({message:'Could not load your order history.'});}
+});
+
+// Public customer-facing M-Commerce API. These routes use the SAME MySQL database as the admin panel.
+app.get('/api/store/products', async (req,res)=>{
+  try {
+    const [products] = await pool.query('SELECT id,name,sku,category,price,stock,safety_stock,alt_text FROM products WHERE stock > 0 ORDER BY category,name');
+    for (const p of products) {
+      const [variants] = await pool.query('SELECT variant_name FROM product_variants WHERE product_id=? ORDER BY id',[p.id]);
+      p.id = Number(p.id); p.price = Number(p.price); p.stock = Number(p.stock);
+      p.variants = variants.map(v=>v.variant_name);
+    }
+    res.json(products);
+  } catch(e) { res.status(500).json({message:'Unable to load the product catalog.'}); }
+});
+
+app.get('/api/store/categories', async (req,res)=>{
+  try { const [rows] = await pool.query('SELECT DISTINCT category FROM products WHERE stock > 0 ORDER BY category'); res.json(rows.map(r=>r.category)); }
+  catch(e) { res.status(500).json({message:'Unable to load categories.'}); }
+});
+
+app.post('/api/store/orders', auth, customerOnly, async (req,res)=>{
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  let customer = {};
+  try {
+    const [profileRows]=await pool.query('SELECT id,full_name fullName,email,phone,address FROM customers WHERE id=? LIMIT 1',[req.user.sub]);
+    if(!profileRows.length) return res.status(401).json({message:'Please sign in again before checking out.'});
+    customer={...profileRows[0],phone:String(req.body.phone||profileRows[0].phone||'').trim(),address:String(req.body.address||profileRows[0].address||'').trim()};
+  } catch(e){ return res.status(500).json({message:'Could not load your customer profile.'}); }
+  if (!customer.fullName?.trim() || !customer.email?.trim() || !customer.phone?.trim() || !customer.address?.trim())
+    return res.status(400).json({message:'Full name, email, phone, and delivery address are required.'});
+  if (!items.length) return res.status(400).json({message:'Your cart is empty.'});
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    let total = 0;
+    const checked = [];
+    for (const item of items) {
+      const productId = Number(item.productId), quantity = Number(item.quantity);
+      if (!Number.isInteger(productId) || !Number.isInteger(quantity) || quantity < 1 || quantity > 99) throw Object.assign(new Error('Each item must have a valid product and quantity.'),{status:400});
+      const [rows] = await conn.query('SELECT id,name,price,stock FROM products WHERE id=? FOR UPDATE',[productId]);
+      const product = rows[0];
+      if (!product) throw Object.assign(new Error('A product in your cart is no longer available.'),{status:409});
+      if (Number(product.stock) < quantity) throw Object.assign(new Error(`Not enough stock for ${product.name}. Please update your cart.`),{status:409});
+      const variant = String(item.variant || '').trim();
+      if (variant) {
+        const [v] = await conn.query('SELECT id FROM product_variants WHERE product_id=? AND variant_name=? LIMIT 1',[productId,variant]);
+        if (!v.length) throw Object.assign(new Error(`The selected variant for ${product.name} is no longer available.`),{status:409});
+      }
+      const unitPrice = Number(product.price);
+      total += unitPrice * quantity;
+      checked.push({productId,productName:product.name,quantity,unitPrice,subtotal:unitPrice*quantity,variant});
+    }
+    const customerId=Number(req.user.sub);
+    await conn.query('UPDATE customers SET full_name=?,phone=?,address=? WHERE id=?',[customer.fullName.trim(),customer.phone.trim(),customer.address.trim(),customerId]);
+    const orderNumber = 'LT-' + Date.now().toString().slice(-8) + Math.floor(10 + Math.random()*90);
+    const itemCount = checked.reduce((sum,item)=>sum+item.quantity,0);
+    const [order] = await conn.query("INSERT INTO orders(order_number,customer_id,items_count,total,status,payment_status,address) VALUES (?,?,?,?,'Pending','Pending',?)",[orderNumber,customerId,itemCount,total,customer.address.trim()]);
+    for (const item of checked) {
+      await conn.query('INSERT INTO order_items(order_id,product_id,product_name,variant_name,quantity,unit_price,subtotal) VALUES (?,?,?,?,?,?,?)',[order.insertId,item.productId,item.productName,item.variant,item.quantity,item.unitPrice,item.subtotal]);
+      const [updated] = await conn.query('UPDATE products SET stock=stock-? WHERE id=? AND stock>=?',[item.quantity,item.productId,item.quantity]);
+      if (!updated.affectedRows) throw Object.assign(new Error(`Stock changed while placing your order for ${item.productName}. Please try again.`),{status:409});
+    }
+    await conn.commit();
+    res.status(201).json({ok:true,orderNumber,status:'Pending',items:itemCount,total:Number(total.toFixed(2)),message:'Your order was placed successfully.'});
+  } catch(e) {
+    await conn.rollback();
+    res.status(e.status || 500).json({message:e.status ? e.message : 'We could not place your order. Please try again.'});
+  } finally { conn.release(); }
 });
 
 app.get('/api/dashboard',auth,adminOnly,async(req,res)=>{
@@ -114,7 +254,7 @@ app.put('/api/products/:id',auth,adminOnly,async(req,res)=>{
 app.delete('/api/products/:id',auth,adminOnly,async(req,res)=>{try{const[r]=await pool.query('DELETE FROM products WHERE id=?',[req.params.id]);if(!r.affectedRows)return res.status(404).json({message:'Product not found.'});res.json({ok:true});}catch(e){res.status(500).json({message:e.message});}});
 
 app.get('/api/orders',auth,adminOnly,async(req,res)=>{
-  try { const [rows]=await pool.query(`SELECT o.*, COALESCE(c.full_name,'Walk-in Customer') customer FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC`); res.json(rows.map(o=>({...o,id:'LT-'+o.order_number.replace(/^LT-/,'')}))); }
+  try { const [rows]=await pool.query(`SELECT o.*, COALESCE(c.full_name,'Walk-in Customer') customer FROM orders o LEFT JOIN customers c ON c.id=o.customer_id ORDER BY o.id DESC`); res.json(rows.map(o=>({...o,id:o.order_number,items:o.items_count,payment:o.payment_status,tracking:o.tracking_number,total:Number(o.total),address:o.address}))); }
   catch(e){res.status(500).json({message:e.message});}
 });
 
@@ -136,7 +276,7 @@ app.get('/api/admin/users',auth,adminOnly,async(req,res)=>{try{const[rows]=await
 app.post('/api/admin/customers',auth,adminOnly,async(req,res)=>{if(!req.body.fullName)return res.status(400).json({message:'Full Name is required.'});try{const[r]=await pool.query('INSERT INTO customers(full_name,title,gender,pronouns,email,phone,address) VALUES (?,?,?,?,?,?,?)',[req.body.fullName,req.body.title||null,req.body.gender||null,req.body.pronouns||null,req.body.email||null,req.body.phone||null,req.body.address||null]);res.status(201).json({ok:true,message:'Customer profile saved.',customer:{id:r.insertId,...req.body}});}catch(e){res.status(500).json({message:e.message});}});
 
 async function start(){
-  try { await pool.query('SELECT 1'); await ensureAdmin(); app.listen(PORT,()=>console.log(`LaundriTrack API running on http://localhost:${PORT}`)); }
+  try { await pool.query('SELECT 1'); await ensureAdmin(); app.listen(PORT,()=>console.log(`GARDEN Laundry Hub API running on http://localhost:${PORT}`)); }
   catch(e){ console.error('MySQL connection failed:',e.message); console.error('Make sure XAMPP MySQL is running and laundritrack.sql has been imported.'); process.exit(1); }
 }
 start();

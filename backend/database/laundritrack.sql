@@ -24,7 +24,8 @@ CREATE TABLE customers (
   title VARCHAR(50) NULL,
   gender VARCHAR(50) NULL,
   pronouns VARCHAR(50) NULL,
-  email VARCHAR(191) NULL,
+  email VARCHAR(191) NULL UNIQUE,
+  password_hash VARCHAR(255) NULL,
   phone VARCHAR(40) NULL,
   address VARCHAR(255) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -74,6 +75,7 @@ CREATE TABLE order_items (
   order_id INT UNSIGNED NOT NULL,
   product_id INT UNSIGNED NULL,
   product_name VARCHAR(150) NOT NULL,
+  variant_name VARCHAR(100) NULL,
   quantity INT NOT NULL DEFAULT 1,
   unit_price DECIMAL(10,2) NOT NULL,
   subtotal DECIMAL(10,2) NOT NULL,
