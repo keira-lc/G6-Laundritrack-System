@@ -1,6 +1,6 @@
-# GARDEN Laundry Hub — Admin + Customer Web Store
+# GARDEN Laundry Hub — Admin + Customer Web 
 
-A laundry operations admin dashboard and customer-facing responsive web storefront branded GARDEN Laundry Hub, with the headline “Wash....Dry....and Fold”. The storefront retains the supplied mobile-client design style and adapts across phone, tablet, laptop, desktop, and TV-sized displays.
+A laundry operations admin dashboard and customer-facing responsive web storefront branded GARDEN Laundry Hub,“Wash....Dry....and Fold”. The storefront retains the supplied mobile-client design style and adapts across different displays.
 
 ## Stack
 - Frontend: React + Vite
@@ -18,10 +18,10 @@ The SQL file is here:
 Tables:
 - `admin_users` — administrator accounts, roles, MFA flag, bcrypt password hash
 - `customers` — customer profile fields, unique email, and nullable bcrypt password hash for customer accounts
-- `products` — SKU, category, price, stock, safety stock, alt text
+- `products` — SKU, category, price, **unit (kg / pc / pack)**, minimum order, stock, safety stock, **picture key**, alt text
 - `product_variants` — product sizes/colors/variants
-- `orders` — order lifecycle, payment, tracking, returns/refunds
-- `order_items` — products and quantities belonging to orders
+- `orders` — order lifecycle, payment method / status / reference, tracking, returns/refunds
+- `order_items` — products, and units belonging to orders
 
 ```
 PORT=5000
@@ -30,10 +30,13 @@ DB_PORT=3306
 DB_NAME=laundritrack
 DB_USER=root
 DB_PASSWORD=
-JWT_SECRET=
+JWT_SECRET=9a8432beac2d194a45b4ac8a199811fadf2745c24bffc61c1fd88546f63470e
+STORE_URL=http://localhost:5173
+PAYMONGO_SECRET_KEY=
+PAYMONGO_WEBHOOK_SECRET=
 ```
 
-## Demo login
+## Admin login
 - Email: `admin@laundritrack.local`
 - Password: `Admin@12345`
 - MFA code: `123456`
@@ -92,3 +95,29 @@ The `customer-web/` folder contains the responsive customer storefront (React + 
 The customer website retains the supplied mobile-client design and uses a responsive card catalog, category chips, persistent bottom navigation, clear stock/price labels, visible form labels, keyboard focus indicators, and text labels for order status. The main purchase path is catalog → add to cart → sign in (if needed) → checkout → place order. Profile and order history are available from the bottom navigation. Product prices and stock are always validated by the backend during checkout; client-side cart totals are for preview only.
 
 For testing on a physical phone connected to the same Wi-Fi, replace `localhost` in `customer-web/.env` with your computer's LAN IPv4 address and ensure Windows Firewall allows the Vite and API ports on your private network. Do not expose this development server to the public internet.
+
+
+## Update: online payments
+
+Add `STORE_URL`, `PAYMONGO_SECRET_KEY` and `PAYMONGO_WEBHOOK_SECRET` to `backend/.env` (see `backend/.env`).
+
+### Online payments (Philippines only, PHP)
+Methods: **GCash, Maya, GrabPay, credit/debit card (Visa/Mastercard)** and **cash on delivery**.
+- Mobile numbers must be Philippine numbers (`09XXXXXXXXX` or `+639XXXXXXXXX`); all amounts are in PHP.
+- **Live mode:** set `PAYMONGO_SECRET_KEY` (use the `sk_test_…` key first). The customer is redirected to PayMongo's hosted checkout, so card and wallet details never touch this system. When they return, the server asks PayMongo whether the payment succeeded and marks the order Paid. To also handle customers who close the tab after paying, add a PayMongo webhook to `https://YOUR-DOMAIN/api/webhooks/paymongo` for the event `checkout_session.payment.paid` and put its signing secret in `PAYMONGO_WEBHOOK_SECRET` (needs a public HTTPS address).
+- **Test/sandbox mode (no key):** the storefront shows a clearly labelled simulated payment screen with “Simulate successful / failed payment”. No real money moves. The admin header shows **Payments: TEST mode** or **LIVE**.
+- Unpaid or failed online orders show a **Pay now** button in the customer's order history.
+- Cards: PayMongo accepts Visa/Mastercard; this project cannot restrict a card to Philippine-issued cards. Phone number, currency and merchant location are the Philippines-only controls.
+
+### Admin updates
+- Catalog: “Sold per” (kilo/piece/pack), price per unit, minimum order, picture picker with preview, category filter, thumbnails. Fixed edit and low-stock bugs (safety stock and alt text were not read correctly before).
+- Orders: payment method and status, expandable item list with kilograms, search and status/payment filters, **Cash received / Mark paid** button, refund notice for online payments (refund the money itself in PayMongo).
+- Dashboard: paid revenue by payment method, “Awaiting payment” count, payment mode badge. Administration: payment setup panel.
+
+
+## Update: landing page, promos, and date booking
+- **Existing Database:** It adds the booking date / promo columns, the `promos` table (12.12 Promo 12% off, Christmas Promo 25% off). New installs get all of this from `laundritrack.sql`.
+- **Customer web:** new Home (landing) page with the GARDEN logo, services, how-it-works, phone and address. The old shop header is replaced by a promo banner. Wash & Dry (Regular / Express) is booked by choosing a visit date from a calendar; the rate per kilo (for example 1 kg = ₱250) is fixed on screen and the shop weighs the laundry on the visit date. Bookings are paid at the shop.
+- **Promos:** apply automatically to Wash & Dry bookings whose visit date falls inside the promo dates (bigger discount wins). Manage them in Admin > Promos.
+- **Admin:** Catalog > Service rates edits the price per kilo; Orders shows visit dates and lets you enter the real weight after weighing (total updates with the rate and promo).
+
